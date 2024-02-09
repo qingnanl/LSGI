@@ -16,7 +16,7 @@ remotes::install_github("https://github.com/qingnanl/LSGI")
 
 ### Tutorial
 
-For a tutorial, please refer to 
+For a tutorial, please refer to [Using LSGI to analyze 10x Visium data](http://htmlpreview.github.io/?https://github.com/qingnanl/LSGI/blob/master/vignette/LSGI-Tutorial.html)
 
 For a better explanation of this method, please refer to our manuscript: 
 
