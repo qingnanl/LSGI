@@ -1,0 +1,239 @@
+---
+title: "LSGI Tutorial"
+author: "Qingnan Liang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  tidy.opts = list(width.cutoff = 60), 
+  tidy = T,
+  echo = TRUE
+)
+```
+
+```{r setup, warning=FALSE, message=FALSE}
+# we recommend using NMF as a default summarization method for gene expression matrix
+# in this example we use RcppML for NMF, other methods are acceptable
+library(Seurat)
+library(Matrix)
+library(RcppML) # https://github.com/zdebruine/RcppML
+library(ggplot2)
+library(LSGI)
+```
+## Introduction
+
+In this tutorial, we show how to run the LSGI method (prepare input data) and perform downstream analysis. We use a 10X breast cancer data as the input, while this analytical method is agnostic to spatial genomics technology. 
+
+##### Read data and preprocessing
+```{r, warning=FALSE, message=FALSE}
+img <- Read10X_Image(image.dir = "C:/Users/liang/work/42_LSGI/LSGI.test/Visium_FFPE_Human_Breast_Cancer_spatial/", 
+                     image.name = "tissue_lowres_image.png", filter.matrix = TRUE)
+data <- Load10X_Spatial(data.dir = "C:/Users/liang/work/42_LSGI/LSGI.test/", filename = "Visium_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5",
+                        assay = "RNA", 
+                        slice = "slice1", 
+                        filter.matrix = TRUE, 
+                        to.upper = FALSE, 
+                        image = img)
+
+data <- NormalizeData(data)
+
+```
+
+##### Run NMF
+```{r, warning=FALSE, message=FALSE}
+# define functions as below
+# some code adapted from this preprint: https://www.biorxiv.org/content/10.1101/2021.09.01.458620v1.full
+
+scan.nmf.mse <- function(obj, ranks = seq(1, 30, 2), tol = 1e-4){ # users can customize the scan by changing 'ranks'
+  dat <- obj@assays$RNA@data
+  errors <- c()
+  ranks <- seq(1, 30, 2)
+  for(i in ranks){
+    # cat("rank: ", i, "\n")
+    mod <- RcppML::nmf(dat, i, tol = 1e-4, verbose = F)
+    mse_i <- mse(dat, mod$w, mod$d, mod$h)
+    errors <- c(errors, mse_i)
+  }
+  results <- data.frame("rank" = ranks, "MSE" = errors)
+  return(results)
+}
+
+sr.nmf <- function(obj, k = 10, tol = 1e-6, assay = "RNA"){
+  dat <- obj@assays$RNA@data
+  nmf_model <- RcppML::nmf(dat, k = k, tol = tol, verbose = F)
+  embeddings <- t(nmf_model$h)
+  rownames(embeddings) <- colnames(obj)
+  colnames(embeddings) <- paste0("nmf_", 1:k)
+  loadings <- nmf_model$w
+  rownames(loadings) <- rownames(obj)
+  obj@reductions$nmf <- CreateDimReducObject(
+    embeddings = embeddings,
+    loadings = loadings,
+    key = "nmf_",
+    assay = assay
+  )
+  return(obj)
+}
+
+get.nmf.info <- function(obj, top.n = 50){
+  feature.loadings <- as.data.frame(obj@reductions$nmf@feature.loadings)
+  
+  top.gene.list <- list()
+  for (i in 1:ncol(feature.loadings)){
+    o <- order(feature.loadings[, i], decreasing = T)[1:top.n]
+    features <- rownames(feature.loadings)[o]
+    top.gene.list[[colnames(feature.loadings)[i]]] <- features
+  }
+  nmf.info <- list(feature.loadings = feature.loadings, top.genes = top.gene.list)
+  return(nmf.info)
+}
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+scan.nmf.res <- scan.nmf.mse(obj = data)
+ggplot(scan.nmf.res, aes(x = rank, y = MSE)) +
+  geom_point(size = 0.7) +
+  geom_smooth(method = "loess", span = 0.2, color = "black", linewidth = 1, se = F) +
+  labs(x = "NMF rank", y = "MSE") +
+  theme_classic() +
+  scale_y_continuous(expand = c(0.01, 0)) +
+  theme(aspect.ratio = 1)
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+# we take k = 10 for running NMF based on the diagnostic plot
+data <- sr.nmf(obj = data, k = 10, tol = 1e-5)
+nmf_info <- get.nmf.info(data)
+str(nmf_info) # show the structure of nmf information extracted from the Seurat object after running NMF
+
+```
+
+
+#### Prepare input data for LSGI
+```{r, warning=FALSE, message=FALSE}
+
+# LSGI requires two inputs: spatial_coords and embeddings
+# In the current version, we require the spatial_coords have colnames as "X", and "Y".
+spatial_coords <- data@images$slice1@coordinates[, c(4, 5)]
+colnames(spatial_coords) <- c("X", "Y")
+print(head(spatial_coords))
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+# row names of embeddings are cell/spot names
+# the row names of embeddings and spatial_coords should be the same (in the same order as well)
+# here 
+embeddings <- data@reductions$nmf@cell.embeddings
+print(embeddings[1:5, 1:5])
+```
+#### Run LSGI
+```{r, warning=FALSE, message=FALSE}
+
+# n.grids.scale: LSGI calculate spatial gradients in multiple small neighborhoods (centered in the 'grid point'), and this n.grid.scale
+# decide the number of this type of neighborhood. The number of neighborhoods equals to (total number of cells)/n.grids.scales
+
+# n.cells.per.meta: number of cells/spots for each neighborhood
+lsgi.res <- local.traj.preprocessing(spatial_coords = spatial_coords, n.grids.scale = 5,
+                                     embeddings = embeddings, n.cells.per.meta = 25)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# we can take a quick look at the LSGI output
+str(lsgi.res, max.level = 1)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# the grid.info dataframe has the information of grid points (centroid of each neighborhood), such as the location (X, Y), gradient 
+# direction (vx, vy), gradient robustness (R_squared), the NMF with largest R_squared (Assignment).
+# the last 4 columns are calculation of scale factors for better gradient (arrow) visualization
+str(lsgi.res$grid.info) 
+```
+
+```{r, warning=FALSE, message=FALSE}
+# cell: the cell ids for each neighborhood
+# assignment.list: the most gradated program (NMF) at each neighborhood
+# rsquared.list: the rsquared value for the assigned NMF at each neighborhood
+# coeff: the regression coefficient (gradient direction) for the assigned NMF at each neighborhood
+# full.linear: the full information of linear regressions for every NMF at every neighborhood
+str(lsgi.res$local.linear.info, max.level = 1)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# Other items in output
+
+# str(lsgi.res$grids) # spatial coordinates of grid points
+# str(lsgi.res$dist.to.grid) # distance between each cell/spot to grid points
+# str(lsgi.res$spatial_coords) # original cell/spot locations
+# str(lsgi.res$embeddings) # the embeddings used as input for LSGi
+```
+
+#### Distance analysis
+```{r, warning=FALSE, message=FALSE}
+dist.mat <- avg.dist.calc(info = infos, minimum.nmf = 20) # calculate average distance between NMF gradients
+plt.dist.heat(dist.mat) # plot distance heatmap
+```
+
+#### Functional annotation
+```{r, warning=FALSE, message=FALSE}
+# this can be done in the same way of NMF factor annotation
+# there are different ways of doing this analysis, here we use hypergeometric test with top 50 genes in each NMF (top loadings)
+# here we only use hallmark gene sets as a brief example
+
+# the top genes are stored in the LSGI outputs
+print(str(infos$nmf.info$top.genes))
+```
+
+```{r, warning=FALSE, message=FALSE}
+# obtain gene sets
+library(msigdbr)
+library(hypeR)
+
+mdb_h <- msigdbr(species = "Homo sapiens", category = "H")
+
+gene.set.list <- list()
+for (gene.set.name in unique(mdb_h$gs_name)){
+  gene.set.list[[gene.set.name]] <- mdb_h[mdb_h$gs_name %in% gene.set.name, ]$gene_symbol
+}
+
+# run hypeR test
+mhyp <- hypeR(signature = infos$nmf.info$top.genes, 
+              genesets = gene.set.list, test="hypergeometric", background = rownames(infos[["nmf.info"]][["feature.loadings"]]))
+hyper.data <- mhyp$data
+hyper.res.list <- list()
+for (nmf.name in names(hyper.data)){
+  res <- as.data.frame(hyper.data[[nmf.name]]$data)
+  hyper.res.list[[nmf.name]] <- res
+}
+
+print(head(hyper.res.list[[1]])) # here we output part of the NMF_1 annotation result
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+
+# Visualize annotation results
+ggplot(hyper.res.list[[1]][1:5, ], aes(x = reorder(label, -log10(fdr)), y = overlap/signature, fill = -log10(fdr))) +
+  geom_bar(stat = "identity",
+           show.legend = T) +
+  xlab("Gene Set") +
+  ylab("Gene Ratio") +
+  viridis::scale_fill_viridis() +
+  theme_classic() + 
+  coord_flip()+ 
+  theme(axis.text.x = element_text(color = "black",
+                                   size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(color = "black",
+                                   size = 8, angle = 0),
+        panel.border = element_rect(colour = "black", fill=NA, size=1)) 
+
+```
