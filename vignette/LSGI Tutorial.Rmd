@@ -22,11 +22,14 @@ library(Seurat)
 library(Matrix)
 library(RcppML) # https://github.com/zdebruine/RcppML
 library(ggplot2)
+library(dplyr)
 library(LSGI)
 ```
 ## Introduction
 
 In this tutorial, we show how to run the LSGI method (prepare input data) and perform downstream analysis. We use a 10X breast cancer data as the input, while this analytical method is agnostic to spatial genomics technology. 
+
+Briefly, LSGI applies NMF (by default) to summarize the collective gene expression profiles of all the cells or spots in a ST data into multiple programs. Through this step, cell loadings are calculated and treated as the cell/spot-level activity of the programs. We examine the spatial map with a slide-window strategy, under which cells are grouped by spatial localizations in overlapping windows. We fit linear models using the spatial coordinates as predictors and cell NMF loadings as target, for every NMF program and every group of cells. We then decide the existence of the gradient with R-squared and the direction with regression coefficients, beta. For a better understanding of this method, please refer to our manuscript (soon to be released).
 
 ##### Read data and preprocessing
 ```{r, warning=FALSE, message=FALSE}
@@ -79,19 +82,6 @@ sr.nmf <- function(obj, k = 10, tol = 1e-6, assay = "RNA"){
   return(obj)
 }
 
-get.nmf.info <- function(obj, top.n = 50){
-  feature.loadings <- as.data.frame(obj@reductions$nmf@feature.loadings)
-  
-  top.gene.list <- list()
-  for (i in 1:ncol(feature.loadings)){
-    o <- order(feature.loadings[, i], decreasing = T)[1:top.n]
-    features <- rownames(feature.loadings)[o]
-    top.gene.list[[colnames(feature.loadings)[i]]] <- features
-  }
-  nmf.info <- list(feature.loadings = feature.loadings, top.genes = top.gene.list)
-  return(nmf.info)
-}
-
 ```
 
 
@@ -110,8 +100,6 @@ ggplot(scan.nmf.res, aes(x = rank, y = MSE)) +
 ```{r, warning=FALSE, message=FALSE}
 # we take k = 10 for running NMF based on the diagnostic plot
 data <- sr.nmf(obj = data, k = 10, tol = 1e-5)
-nmf_info <- get.nmf.info(data)
-str(nmf_info) # show the structure of nmf information extracted from the Seurat object after running NMF
 
 ```
 
@@ -145,6 +133,7 @@ lsgi.res <- local.traj.preprocessing(spatial_coords = spatial_coords, n.grids.sc
                                      embeddings = embeddings, n.cells.per.meta = 25)
 ```
 
+#### Let's take a look at the LSGI output
 
 ```{r, warning=FALSE, message=FALSE}
 # we can take a quick look at the LSGI output
@@ -169,7 +158,7 @@ str(lsgi.res$local.linear.info, max.level = 1)
 
 
 ```{r, warning=FALSE, message=FALSE}
-# Other items in output
+# Other items in output (we skip it here but users can explore)
 
 # str(lsgi.res$grids) # spatial coordinates of grid points
 # str(lsgi.res$dist.to.grid) # distance between each cell/spot to grid points
@@ -177,9 +166,28 @@ str(lsgi.res$local.linear.info, max.level = 1)
 # str(lsgi.res$embeddings) # the embeddings used as input for LSGi
 ```
 
+#### Visualization of LSGI outputs
+
+```{r, warning=FALSE, message=FALSE}
+
+# plot multiple factors
+plt.factors.gradient.ind(info = lsgi.res, r_squared_thresh = 0.6, minimum.fctr = 10) # plot gradient (had to appear in at least 10 grids)
+```
+```{r, warning=FALSE, message=FALSE}
+plt.factors.gradient.ind(info = lsgi.res, r_squared_thresh = 0.6,sel.factors = c("nmf_5", "nmf_6", "nmf_8"), minimum.fctr = 10) # plot selected gradients
+```
+
+
+#### Plot single gradient with NMF loadings
+```{r, warning=FALSE, message=FALSE}
+# plot individual factor together with the NMF loadings
+plt.factor.gradient.ind(info = lsgi.res, fctr = "nmf_1", r_squared_thresh = 0.6)
+```
+
+
 #### Distance analysis
 ```{r, warning=FALSE, message=FALSE}
-dist.mat <- avg.dist.calc(info = infos, minimum.nmf = 20) # calculate average distance between NMF gradients
+dist.mat <- avg.dist.calc(info = lsgi.res, minimum.fctr = 10) # calculate average distance between NMF gradients
 plt.dist.heat(dist.mat) # plot distance heatmap
 ```
 
@@ -188,9 +196,24 @@ plt.dist.heat(dist.mat) # plot distance heatmap
 # this can be done in the same way of NMF factor annotation
 # there are different ways of doing this analysis, here we use hypergeometric test with top 50 genes in each NMF (top loadings)
 # here we only use hallmark gene sets as a brief example
+# the nmf information can be fetched from the Seurat object
 
-# the top genes are stored in the LSGI outputs
-print(str(infos$nmf.info$top.genes))
+get.nmf.info <- function(obj, top.n = 50){
+  feature.loadings <- as.data.frame(obj@reductions$nmf@feature.loadings)
+  
+  top.gene.list <- list()
+  for (i in 1:ncol(feature.loadings)){
+    o <- order(feature.loadings[, i], decreasing = T)[1:top.n]
+    features <- rownames(feature.loadings)[o]
+    top.gene.list[[colnames(feature.loadings)[i]]] <- features
+  }
+  nmf.info <- list(feature.loadings = feature.loadings, top.genes = top.gene.list)
+  return(nmf.info)
+}
+
+nmf_info <- get.nmf.info(data)
+str(nmf_info) # show the structure of nmf information extracted from the Seurat object after running NMF
+
 ```
 
 ```{r, warning=FALSE, message=FALSE}
@@ -206,8 +229,8 @@ for (gene.set.name in unique(mdb_h$gs_name)){
 }
 
 # run hypeR test
-mhyp <- hypeR(signature = infos$nmf.info$top.genes, 
-              genesets = gene.set.list, test="hypergeometric", background = rownames(infos[["nmf.info"]][["feature.loadings"]]))
+mhyp <- hypeR(signature = nmf_info$top.genes, 
+              genesets = gene.set.list, test="hypergeometric", background = rownames(nmf_info[["feature.loadings"]]))
 hyper.data <- mhyp$data
 hyper.res.list <- list()
 for (nmf.name in names(hyper.data)){
@@ -235,5 +258,164 @@ ggplot(hyper.res.list[[1]][1:5, ], aes(x = reorder(label, -log10(fdr)), y = over
         axis.text.y = element_text(color = "black",
                                    size = 8, angle = 0),
         panel.border = element_rect(colour = "black", fill=NA, size=1)) 
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+
+# Finally, for Visium data only, we have the following functions that can plot the gradient superimposed with HE image
+
+library(magick)
+plot.overlay.factor <- function(object, info, sel.factors = NULL, r_squared_thresh = 0.6, minimum.fctr = 20){
+  scf <- object@images[["slice1"]]@scale.factors[["lowres"]]
+  object <- subset(object, cells = rownames(info$spatial_coords))
+  print(identical(rownames(object@meta.data), rownames(info$spatial_coords)))
+  object <- rotateSeuratImage(object, rotation = "L90")
+  object@meta.data <- cbind(object@meta.data, info$embeddings)
+
+  
+  lin.res.df <- get.ind.rsqrs(info)
+  lin.res.df <- na.omit(lin.res.df)
+  lin.res.df <- lin.res.df[lin.res.df$rsquared > r_squared_thresh, ]
+  if (!is.null(sel.factors)){
+    lin.res.df <- lin.res.df[lin.res.df$fctr %in% sel.factors, ]
+  }
+  lin.res.df <- lin.res.df %>%
+    group_by(fctr) %>%
+    filter(n() >= minimum.fctr) %>%
+    ungroup()
+  
+  spatial_coords <- info$spatial_coords
+  spatial_coords$X <- spatial_coords$X * scf
+  spatial_coords$Y <- spatial_coords$Y * scf
+  
+  lin.res.df$Xend <- lin.res.df$X + lin.res.df$vx.u
+  lin.res.df$Yend <- lin.res.df$Y + lin.res.df$vy.u
+  
+  lin.res.df$X <- lin.res.df$X * scf
+  lin.res.df$Xend <- lin.res.df$Xend * scf
+  lin.res.df$Y <- lin.res.df$Y * scf
+  lin.res.df$Yend <- lin.res.df$Yend * scf
+  
+  p <- SpatialFeaturePlot(object, features = NULL, alpha = c(0)) + NoLegend() +
+    geom_segment(data = as.data.frame(lin.res.df), aes(x = X, y = Y, xend = Xend, yend = Yend, color = fctr, fill = NULL),
+                 linewidth = 0.4, arrow = arrow(length = unit(0.1, "cm"))) + scale_color_brewer(palette = "Paired") +
+    #  scale_fill_gradient(low="lightgrey", high="navy") + 
+    theme_classic() + 
+    theme(axis.text.x = element_text(face = "bold", color = "black",
+                                     size = 12, angle = 0, hjust = 1),
+          axis.text.y = element_text(face = "bold", color = "black",
+                                     size = 12, angle = 0))
+  
+  
+  return(p)
+}
+
+# Adapted from this link: https://github.com/satijalab/seurat/issues/2702#issuecomment-1626010475
+rotateSeuratImage <- function(seuratVisumObject, slide = "slice1", rotation="Vf"){
+  if(!(rotation %in% c("180","Hf","Vf", "L90", "R90"))){
+    cat("Rotation should be either 180, L90, R90, Hf or Vf\n")
+    return(NULL)
+  }else{
+    seurat.visium <- seuratVisumObject
+    ori.array <- (seurat.visium@images)[[slide]]@image
+    img.dim <- dim(ori.array)[1:2]/(seurat.visium@images)[[slide]]@scale.factors$lowres
+    new.mx <- c()  
+    # transform the image array
+    for (rgb_idx in 1:3){
+      each.mx <- ori.array[,,rgb_idx]
+      each.mx.trans <- rotimat(each.mx, rotation)
+      new.mx <- c(new.mx, list(each.mx.trans))
+    }
+    
+    # construct new rgb image array
+    new.X.dim <- dim(each.mx.trans)[1]
+    new.Y.dim <- dim(each.mx.trans)[2]
+    new.array <- array(c(new.mx[[1]],
+                         new.mx[[2]],
+                         new.mx[[3]]), 
+                       dim = c(new.X.dim, new.Y.dim, 3))
+    
+    #swap old image with new image
+    seurat.visium@images[[slide]]@image <- new.array
+    
+    ## step4: change the tissue pixel-spot index
+    img.index <- (seurat.visium@images)[[slide]]@coordinates
+    
+    #swap index
+    if(rotation == "Hf"){
+      seurat.visium@images[[slide]]@coordinates$imagecol <- img.dim[2]-img.index$imagecol
+    }
+    
+    if(rotation == "Vf"){
+      seurat.visium@images[[slide]]@coordinates$imagerow <- img.dim[1]-img.index$imagerow
+    }
+    
+    if(rotation == "180"){
+      seurat.visium@images[[slide]]@coordinates$imagerow <- img.dim[1]-img.index$imagerow
+      seurat.visium@images[[slide]]@coordinates$imagecol <- img.dim[2]-img.index$imagecol
+    }
+    
+    if(rotation == "L90"){
+      seurat.visium@images[[slide]]@coordinates$imagerow <- img.dim[2]-img.index$imagecol
+      seurat.visium@images[[slide]]@coordinates$imagecol <- img.index$imagerow
+    }
+    
+    if(rotation == "R90"){
+      seurat.visium@images[[slide]]@coordinates$imagerow <- img.index$imagecol
+      seurat.visium@images[[slide]]@coordinates$imagecol <- img.dim[1]-img.index$imagerow
+    }
+    
+    return(seurat.visium)
+  }  
+}
+
+rotimat <- function(foo,rotation){
+  if(!is.matrix(foo)){
+    cat("Input is not a matrix")
+    return(foo)
+  }
+  if(!(rotation %in% c("180","Hf","Vf", "R90", "L90"))){
+    cat("Rotation should be either L90, R90, 180, Hf or Vf\n")
+    return(foo)
+  }
+  if(rotation == "180"){
+    foo <- foo %>% 
+      .[, dim(.)[2]:1] %>%
+      .[dim(.)[1]:1, ]
+  }
+  if(rotation == "Hf"){
+    foo <- foo %>%
+      .[, dim(.)[2]:1]
+  }
+  
+  if(rotation == "Vf"){
+    foo <- foo %>%
+      .[dim(.)[1]:1, ]
+  }
+  if(rotation == "L90"){
+    foo = t(foo)
+    foo <- foo %>%
+      .[dim(.)[1]:1, ]
+  }
+  if(rotation == "R90"){
+    foo = t(foo)
+    foo <- foo %>%
+      .[, dim(.)[2]:1]
+  }
+  return(foo)
+}
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# then run
+plot.overlay.factor(object = data, info = lsgi.res, sel.factors = NULL) 
+
+```
+```{r, warning=FALSE, message=FALSE}
+# or plot any selected factors
+plot.overlay.factor(object = data, info = lsgi.res, sel.factors = c("nmf_3", "nmf_7")) 
 
 ```
