@@ -31,7 +31,9 @@ In this tutorial, we show how to run the LSGI method (prepare input data) and pe
 
 Briefly, LSGI applies NMF (by default) to summarize the collective gene expression profiles of all the cells or spots in a ST data into multiple programs. Through this step, cell loadings are calculated and treated as the cell/spot-level activity of the programs. We examine the spatial map with a slide-window strategy, under which cells are grouped by spatial localizations in overlapping windows. We fit linear models using the spatial coordinates as predictors and cell NMF loadings as target, for every NMF program and every group of cells. We then decide the existence of the gradient with R-squared and the direction with regression coefficients, beta. For a better understanding of this method, please refer to our manuscript (soon to be released).
 
-##### Read data and preprocessing
+
+
+#### Read data and preprocessing
 ```{r, warning=FALSE, message=FALSE}
 img <- Read10X_Image(image.dir = "C:/Users/liang/work/42_LSGI/LSGI.test/Visium_FFPE_Human_Breast_Cancer_spatial/", 
                      image.name = "tissue_lowres_image.png", filter.matrix = TRUE)
@@ -46,7 +48,7 @@ data <- NormalizeData(data)
 
 ```
 
-##### Run NMF
+#### Run NMF
 ```{r, warning=FALSE, message=FALSE}
 # define functions as below
 # some code adapted from this preprint: https://www.biorxiv.org/content/10.1101/2021.09.01.458620v1.full
