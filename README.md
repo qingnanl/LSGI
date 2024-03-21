@@ -18,10 +18,10 @@ remotes::install_github("https://github.com/qingnanl/LSGI")
 
 For a tutorial, please refer to [Using LSGI to analyze 10x Visium data](http://htmlpreview.github.io/?https://github.com/qingnanl/LSGI/blob/master/vignette/LSGI-Tutorial.html)
 
-For a better explanation of this method, please refer to our manuscript: 
+For a better explanation of this method, please refer to our manuscript: https://www.biorxiv.org/content/10.1101/2024.03.19.585725v1
 
 ### Related links
 
-Here we have some tumor ST data processed with LSGI: 
+Here we have some tumor ST data processed with LSGI: https://zenodo.org/records/10626940
 
 Please also refer to the manual on this Zenodo repo to explore the data (some visualization functions are tailored for highlighting tumor regions).
