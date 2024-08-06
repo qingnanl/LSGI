@@ -6,6 +6,8 @@ Cellular anatomy and signaling vary across niches, which can induce gradated gen
 ### Install
 
 ```
+# There is a dependency package 'anticlust' and please use older versions of the package (e.g., 0.6.1).
+
 # Development version (recommended):
 
 # install.packages("remotes")
