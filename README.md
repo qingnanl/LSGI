@@ -20,6 +20,8 @@ remotes::install_github("https://github.com/qingnanl/LSGI")
 
 For a tutorial, please refer to [Using LSGI to analyze 10x Visium data](http://htmlpreview.github.io/?https://github.com/qingnanl/LSGI/blob/master/vignette/LSGI-Tutorial.html)
 
+We added a tutorial for single-gene type analysis [Using LSGI to analyze seqFISH data](http://htmlpreview.github.io/?https://github.com/qingnanl/LSGI/blob/master/vignette/LSGI-demo_seqFISH.html)
+
 For a better explanation of this method, please refer to our manuscript: https://www.biorxiv.org/content/10.1101/2024.03.19.585725v1
 
 ### Related links
