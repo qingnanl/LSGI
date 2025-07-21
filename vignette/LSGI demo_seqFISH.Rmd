@@ -1,0 +1,74 @@
+---
+title: "LSGI analysis and visualization demo: seqFISH"
+author: "Qingnan Liang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  tidy.opts = list(width.cutoff = 60), 
+  tidy = T,
+  echo = TRUE
+)
+```
+
+```{r setup, warning=FALSE, message=FALSE}
+library(Seurat)
+library(ggplot2) # for plotting
+library(dplyr)
+library(LSGI)
+library(Matrix)
+```
+## Introduction
+
+Here is a demonstration of how to use LSGI to analyze data at the individual gene level, instead of gene-program level. A seqFISH dataset is used but it is generalizable to other data types.
+
+##### Read pre-process the data
+```{r, warning=FALSE, message=FALSE}
+
+loexpr <- readRDS("./exprs.rds")
+lometa <- readRDS("./metadata.rds")
+losr <- CreateSeuratObject(counts = loexpr) # just a standard seurat object. 
+losr@meta.data <- lometa
+losr.z1 <- subset(losr, subset = z == 2 & embryo == 'embryo1')
+losr.z1
+```
+
+##### Subset the data: retain spinal cord part
+```{r, warning=FALSE, message=FALSE}
+sc <- subset(losr.z1, subset = ((x_global>1645|y_global>1505)|x_global+y_global>3120) & y_global<1540 & celltype_mapped_refined == "Spinal cord")
+losr.z1$new_label <- ifelse(colnames(losr.z1) %in% colnames(sc), "Spinal_cord", "Other")
+ggplot(losr.z1@meta.data, aes(x=x_global, y=y_global, color=new_label)) +
+  geom_point(size = 0.4) + # xlim(1540, 1680) + ylim(1400, 1580) +
+  theme_classic() + # NoLegend() + 
+  theme(axis.title=element_text(size=14,face="bold"), 
+        axis.text = element_text(size=14,face="bold"))
+```
+
+#### Prepare for LSGI run (local.traj.preprocessing)
+```{r, warning=FALSE, message=FALSE}
+# the matrices are extracted from the seurat object, so it really does not mattern which
+# version it is (V5 here)
+lo_spatial_coords <- sc@meta.data[, c("x_global", "y_global")]
+colnames(lo_spatial_coords) <- c("X", "Y")
+#lo_spatial_coords  
+lo_expr <- t(sc@assays$RNA@layers$counts)
+colnames(lo_expr) <- rownames(sc)
+rownames(lo_expr) <- colnames(sc)
+lsgi.res_lo <- local.traj.preprocessing(spatial_coords = lo_spatial_coords,
+                                        embeddings = lo_expr, n.cells.per.meta = 20)
+```
+
+#### Structure of the results
+```{r, warning=FALSE, message=FALSE}
+print(str(lsgi.res_lo))
+```
+
+#### Visualization
+```{r, warning=FALSE, message=FALSE}
+plt.factor.gradient.ind(info = lsgi.res_lo, r_squared_thresh = 0.3, fctr = "Notch1")
+
+```
